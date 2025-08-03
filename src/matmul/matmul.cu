@@ -1,4 +1,3 @@
-// Include deps for cuda
 #include <torch/extension.h>
 #include <stdio.h>
 #include <c10/cuda/CUDAException.h>
@@ -19,7 +18,7 @@ __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { r
 
 
 // MatMul kernel
-__global__ void matmul_tiled_sqr_kernel(float* A, float* B, float* C, int h, int w, int k) {
+__global__ void matmul_tiled_kernel(float* A, float* B, float* C, int h, int w, int k) {
     const int TILE_SIZE = 16; // Define the tile size
     __shared__ float As[TILE_SIZE][TILE_SIZE];
     __shared__ float Bs[TILE_SIZE][TILE_SIZE];
@@ -36,20 +35,24 @@ __global__ void matmul_tiled_sqr_kernel(float* A, float* B, float* C, int h, int
     float res = 0.0f;
 
     for (int nTile=0; nTile < nTiles; nTile++) {
-        // M_tile[ir][ic] = (((r < h) && (K_tileidx * TILE_SIZE + ic < k)) ? M[r * k + K_tileidx * TILE_SIZE + ic] : 0.f);
-        // N_tile[ir][ic] = ((((K_tileidx * TILE_SIZE + ir) < k) && (c < w)) ? N[(K_tileidx * TILE_SIZE + ir) * w + c] : 0.f);
-    
-        As[rowIdxTile][colIdxTile] = A[
-            rowIdx*k                         // Go to the right row
-            + nTile*TILE_SIZE +rowIdxTile    // Iterate on the respecctive tile element in each tile
-        ];
-        Bs[rowIdxTile][colIdxTile] = B[
-            k*(
-                nTile*TILE_SIZE   // number of rows to skip for the previuous tiles
-                + rowIdxTile    // number of rows to skip for the current tile
-            ) 
-            + colIdx                        // Go to the right column
-        ];
+        if (rowIdx < h && nTile * TILE_SIZE + colIdxTile < k) 
+            As[rowIdxTile][colIdxTile] = A[
+                rowIdx * k                         // Go to the right row
+                + nTile * TILE_SIZE + colIdxTile    // Iterate on the respecctive tile element in each tile
+            ];
+        else
+            As[rowIdxTile][colIdxTile] = 0.0f;
+
+        if (nTile * TILE_SIZE + rowIdxTile < k && colIdx < w)
+            Bs[rowIdxTile][colIdxTile] = B[
+                w * (
+                    nTile*TILE_SIZE   // number of rows to skip for the previuous tiles
+                    + rowIdxTile    // number of rows to skip for the current tile
+                ) 
+                + colIdx                        // Go to the right column
+            ];
+        else
+            Bs[rowIdxTile][colIdxTile] = 0.0f;
         __syncthreads();
         
         for (int tile_k=0; tile_k< TILE_SIZE; tile_k++) {
@@ -58,12 +61,12 @@ __global__ void matmul_tiled_sqr_kernel(float* A, float* B, float* C, int h, int
         __syncthreads();
     };
     if (rowIdx < h && colIdx < w) {
-    C[w*rowIdx + colIdx] = res;
+        C[w*rowIdx + colIdx] = res;
     };
 }
 
 
-torch::Tensor matmul_tiled_sqr(torch::Tensor A, torch::Tensor B) {
+torch::Tensor matmul_tiled(torch::Tensor A, torch::Tensor B) {
     const int TILE_SIZE = 16; // Define the tile size
     CHECK_INPUT(A); CHECK_INPUT(B);
     const int h = A.size(0);
@@ -76,7 +79,7 @@ torch::Tensor matmul_tiled_sqr(torch::Tensor A, torch::Tensor B) {
 
     dim3 tbp(TILE_SIZE, TILE_SIZE);
     dim3 blocks(cdiv(w, TILE_SIZE), cdiv(h, TILE_SIZE));
-    matmul_tiled_sqr_kernel<<<blocks, tbp>>>(
+    matmul_tiled_kernel<<<blocks, tbp>>>(
         A.data_ptr<float>(), 
         B.data_ptr<float>(), 
         C.data_ptr<float>(), 
