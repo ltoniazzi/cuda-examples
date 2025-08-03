@@ -1,5 +1,21 @@
 // Include deps for cuda
+#include <torch/extension.h>
+#include <stdio.h>
+#include <c10/cuda/CUDAException.h>
 
+#define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
+#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
+#define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
+#define CUDA_ERR(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+__host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b;}
 
 
 // MatMul kernel
@@ -15,7 +31,7 @@ __global__ void matmul_tiled_sqr_kernel(float* A, float* B, float* C, int h, int
     int colIdxTile = threadIdx.x; 
 
 
-    int nTiles = cdiv(w, TILE_SIZE);
+    int nTiles = cdiv(k, TILE_SIZE);
 
     float res = 0.0f;
 
@@ -24,43 +40,32 @@ __global__ void matmul_tiled_sqr_kernel(float* A, float* B, float* C, int h, int
         // N_tile[ir][ic] = ((((K_tileidx * TILE_SIZE + ir) < k) && (c < w)) ? N[(K_tileidx * TILE_SIZE + ir) * w + c] : 0.f);
     
         As[rowIdxTile][colIdxTile] = A[
-            rowIdx*w                         // Go to the right row
+            rowIdx*k                         // Go to the right row
             + nTile*TILE_SIZE +rowIdxTile    // Iterate on the respecctive tile element in each tile
-        ]
+        ];
         Bs[rowIdxTile][colIdxTile] = B[
-            // nTile*TILE_SIZE*w + w*rowIdxTile 
-            w*(
+            k*(
                 nTile*TILE_SIZE   // number of rows to skip for the previuous tiles
                 + rowIdxTile    // number of rows to skip for the current tile
             ) 
             + colIdx                        // Go to the right column
         ];
-
-
         __syncthreads();
-        for (int tile_k=0; tile_k< TILE_SIZE; i++) {
-            res += As[rowIdxTile][tile_k]*Bs[tile_k][colIdxTile]
-        }
-
+        
+        for (int tile_k=0; tile_k< TILE_SIZE; tile_k++) {
+            res += As[rowIdxTile][tile_k]*Bs[tile_k][colIdxTile];
+        };
         __syncthreads();
-
-    }
-    C[w*rowIdx + c] = res;
+    };
+    if (rowIdx < h && colIdx < w) {
+    C[w*rowIdx + colIdx] = res;
+    };
 }
 
 
-
-int cdiv(int a, int b) {
-    return (a + b - 1) / b;
-}
-
-
-// Torch function
-#include <torch/extension.h>
-#include <cuda.h>
-
-Torch matmul_tiled_sqr(A: torch, B: torch) {
+torch::Tensor matmul_tiled_sqr(torch::Tensor A, torch::Tensor B) {
     const int TILE_SIZE = 16; // Define the tile size
+    CHECK_INPUT(A); CHECK_INPUT(B);
     const int h = A.size(0);
     const int k = A.size(1);
     const int w = B.size(1);
@@ -69,8 +74,16 @@ Torch matmul_tiled_sqr(A: torch, B: torch) {
     torch::Tensor C = torch::zeros({h, w}, A.options());
 
 
-    dim3 tbp = dim3(TILE_SIZE, TILE_SIZE);
-    dim3 blocks = dim3(cdiv(w, TILE_SIZE), cdiv(h, TILE_SIZE));
-    matmul_tiled_sqr_kernel<<<blocks, tbp>>>(A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), h, w);
-    cudaError_t err = cudaGetLastError();
+    dim3 tbp(TILE_SIZE, TILE_SIZE);
+    dim3 blocks(cdiv(w, TILE_SIZE), cdiv(h, TILE_SIZE));
+    matmul_tiled_sqr_kernel<<<blocks, tbp>>>(
+        A.data_ptr<float>(), 
+        B.data_ptr<float>(), 
+        C.data_ptr<float>(), 
+        h, 
+        w,
+        k
+    );
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return C;
 }
