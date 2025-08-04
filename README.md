@@ -10,6 +10,7 @@ Collection of example kernels:
 make setup
 ```
 
+
 Tested on: 
 - NVIDIA A10G
 - CUDA Version: 12.6

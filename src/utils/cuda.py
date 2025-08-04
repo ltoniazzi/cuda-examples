@@ -27,4 +27,4 @@ if __name__ =="__main__":
     fname = "softmax"
     cpp_source = get_sig(fname, cuda_source)
     # print(cpp_source)
-    module = load_cuda(cuda_source, cpp_source, funcs=[fname])
+    module = load_cuda(cuda_source, cpp_source, funcs=[fname], verbose=True, opt=True)
