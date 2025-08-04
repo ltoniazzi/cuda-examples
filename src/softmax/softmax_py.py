@@ -2,7 +2,7 @@ from collections import namedtuple
 import torch
 dim3 = namedtuple('dim3', ['x','y','z'], defaults=(1,1))
 
-def softmax_kernel(blockId: dim3, blockDim: dim3, threadId, V: torch.Tensor, O: torch.Tensor, s: int):
+def softmax_py_kernel(blockId: dim3, blockDim: dim3, threadId, V: torch.Tensor, O: torch.Tensor, s: int):
     """
     Compute softmax of V using O as the output tensor.
     """
@@ -34,7 +34,7 @@ def blk_kernel1d(f, blocks, threads, *args):
                 for j1 in range(threads.x): 
                     f(dim3(i1), dim3(blocks.x), dim3(j1), *args)
      
-def softmax(V): 
+def softmax_py(V): 
     s = V.shape[0]
     tpb = 32  # threads per block
     threads = dim3(tpb, 1, 1)
@@ -42,15 +42,17 @@ def softmax(V):
     O = torch.zeros_like(V, dtype=torch.float32)
 
     blk_kernel1d(
-         softmax_kernel, blocks, threads, V, O, s
+         softmax_py_kernel, blocks, threads, V, O, s
     )
 
     return O
 
-V = torch.randn(32, dtype=torch.float32)
 
-O = softmax(V)
-# print("Softmax output:", O)
+if __name__ == "__main__":
+    V = torch.randn(32, dtype=torch.float32)
 
-O_torch = torch.softmax(V, dim=0)
-print(torch.allclose(O, O_torch, atol=1e-4))
+    O = softmax_py(V)
+    # print("Softmax output:", O)
+
+    O_torch = torch.softmax(V, dim=0)
+    print(torch.allclose(O, O_torch, atol=1e-4))
