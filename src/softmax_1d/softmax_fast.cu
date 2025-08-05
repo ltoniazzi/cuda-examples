@@ -63,8 +63,8 @@ torch::Tensor softmax_fast(torch::Tensor V) {
     const int d = V.size(0);
     torch::Tensor O = torch::empty_like(V);
 
-    const int maxThreads = 1024;
-    const int threads = std::min(d, maxThreads);
+    // const int maxThreads = d;
+    const int threads = d;
     const int shared_mem_bytes = threads * sizeof(float);
 
     softmax_fast_kernel<<<1, threads, shared_mem_bytes>>>(

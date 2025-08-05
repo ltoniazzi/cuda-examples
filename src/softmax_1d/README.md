@@ -1,20 +1,23 @@
 # Some examples of building cuda kernels for 1D softmax
 
+In this folder we have:
+- "fast" implementation (for 1D tensors that fit in a block)
+- Tiled implementaion (slower than fast)
+- Naive and unsafe implmentation
+- Triton implememntation from the triton examples.
 
-Layer	What it does	Link
-Python API	torch.nn.functional.softmax()	functional.py
-C++ dispatch	ATen/native/SoftMax.cpp	SoftMax.cpp
-CUDA backend	ATen/native/cuda/SoftMax.cu	SoftMax.cu
-Triton/Flash	Fused/traced	[Triton softmax tutorial](https://github.com/triton-lang/triton/blob/main/python/tutorials/02-fused-softmax.py)
+See notebook for profiling example of the custom kernels.
+Run triton script fot its benchmarking
+ 
 
-Would you like help reproducing PyTorch’s softmax in Triton or reimplementing it exactly like their CUDA version?
+## Real implementaion
+| Layer           | What it does                 | Link                                                                                      |
+|----------------|------------------------------|-------------------------------------------------------------------------------------------|
+| Python API     | `torch.nn.functional.softmax()` | `functional.py`                                                                          |
+| C++ dispatch   | `ATen/native/SoftMax.cpp`     | `SoftMax.cpp`                                                                             |
+| CUDA backend   | `ATen/native/cuda/SoftMax.cu` | [SoftMax.cu](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/SoftMax.cu) |
+| Triton/Flash   | Fused/traced                  | [Triton softmax tutorial](https://github.com/triton-lang/triton/blob/main/python/tutorials/02-fused-softmax.py) |
 
-
-## TODO
-- add triton
-- clean up profiling notebook
-- fast is actually slow?
-- deeper profiling?
 
 
 ### Try see PTX:
