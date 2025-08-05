@@ -18,7 +18,7 @@ __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { r
 
 
 // Softmax kernel
-__global__ void softmax_kernel(float* input, float* output, int d) {
+__global__ void softmax_fast_kernel(float* input, float* output, int d) {
     extern __shared__ float sdata[];
     int tid = threadIdx.x;
 
@@ -67,7 +67,7 @@ torch::Tensor softmax(torch::Tensor V) {
     const int threads = std::min(d, maxThreads);
     const int shared_mem_bytes = threads * sizeof(float);
 
-    softmax_kernel<<<1, threads, shared_mem_bytes>>>(
+    softmax_fast_kernel<<<1, threads, shared_mem_bytes>>>(
         V.data_ptr<float>(), 
         O.data_ptr<float>(), 
         d

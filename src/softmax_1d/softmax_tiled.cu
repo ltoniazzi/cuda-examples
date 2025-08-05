@@ -17,47 +17,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b;}
 
 
-// Softmax kernel
-__global__ void softmax_kernel(float* V, float* O, int d) {
-   
-    int rowIdx = blockIdx.x*blockDim.x + threadIdx.x;
-
-    float res = 0.0f;
-    float tot = 0.0f;
-
-    if (rowIdx < d) {
-
-        for (int i=0; i < d; i++) {
-
-            float cur = V[i];       // d reads * d threads
-            cur = __expf(cur);      // d exp * d threads
-            tot += cur;             // d sum * d threads
-            if (i == rowIdx)
-                res = cur;
-        }  
-    
-        O[rowIdx] = res/tot; // (1 div + 1 write) * d threads;
-    }   
-}
-
-
-torch::Tensor softmax(torch::Tensor V) {
-    const int TILE_SIZE = 32;       // Define the tile size
-    CHECK_INPUT(V);
-    const int d = V.size(0);
-
-    torch::Tensor O = torch::zeros({d}, V.options());
-
-    dim3 tbp(TILE_SIZE);
-    dim3 blocks(cdiv(d, TILE_SIZE));
-    softmax_kernel<<<blocks, tbp>>>(
-        V.data_ptr<float>(), 
-        O.data_ptr<float>(),
-        d
-    );
-    C10_CUDA_KERNEL_LAUNCH_CHECK();
-    return O;
-}
 
 
 // Softmax kernel
@@ -70,6 +29,7 @@ __global__ void softmax_tiled_kernel(float* V, float* O, int d) {
 
     float res = 0.0f;
     float tot = 0.0f;
+    float max = -INFINITY;
     float cur = 0.0f;
 
 
@@ -90,14 +50,15 @@ __global__ void softmax_tiled_kernel(float* V, float* O, int d) {
             __syncthreads();
 
             for (int i=0; i < TILE_SIZE; i++) {
-                tot += Ts[i];
+                tot += __expf(Ts[i]);
+                max = fmaxf(max, Ts[i]);
             }
             __syncthreads();
 
         };
 
 
-        O[rowIdx] = res/tot; // (1 div + 1 write) * d threads;
+        O[rowIdx] = __expf(res-max)/(tot * __expf(-max)); // (1 div + 1 write) * d threads;
     }   
 }
 
@@ -111,7 +72,7 @@ torch::Tensor softmax_tiled(torch::Tensor V) {
 
     dim3 tbp(TILE_SIZE);
     dim3 blocks(cdiv(d, TILE_SIZE));
-    softmax_kernel<<<blocks, tbp>>>(
+    softmax_tiled_kernel<<<blocks, tbp>>>(
         V.data_ptr<float>(), 
         O.data_ptr<float>(),
         d

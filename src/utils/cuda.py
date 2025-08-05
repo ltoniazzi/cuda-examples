@@ -2,6 +2,8 @@ import torch
 import re
 import matplotlib.pyplot as plt
 from torch.utils.cpp_extension import load_inline
+import torch
+from torch.profiler import profile, ProfilerActivity
 
 def get_sig(fname, src):
     res = re.findall(rf'^(.+\s+{fname}\(.*?\))\s*{{?\s*$', src, re.MULTILINE)
@@ -18,6 +20,13 @@ def load_cuda(cuda_src, cpp_src, funcs, opt=True, verbose=False, name=None):
 def cdiv(a,b):
     "Int ceiling division of `a` over `b`"
     return (a+b-1)//b
+
+
+def profile_kernel(module, fname, *args, **kwargs):
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                with_stack=True, record_shapes=True) as prof:
+        getattr(module, fname)(*args, **kwargs)
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
 
 
 if __name__ =="__main__":
