@@ -25,7 +25,9 @@ def cdiv(a,b):
 def profile_kernel(module, fname, *args, **kwargs):
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 with_stack=True, record_shapes=True) as prof:
+        torch.cuda.synchronize()
         getattr(module, fname)(*args, **kwargs)
+        torch.cuda.synchronize()
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
 
 
