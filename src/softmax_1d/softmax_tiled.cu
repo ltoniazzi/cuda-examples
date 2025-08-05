@@ -30,6 +30,7 @@ __global__ void softmax_tiled_kernel(float* V, float* O, int d) {
     float res = 0.0f;
     float tot = 0.0f;
     float max = -INFINITY;
+    float max_prev = -INFINITY;
     float cur = 0.0f;
 
 
@@ -38,27 +39,35 @@ __global__ void softmax_tiled_kernel(float* V, float* O, int d) {
     if (rowIdx < d) {
         for (int nTile=0; nTile < nTiles; nTile++) {
 
-            if (nTile*TILE_SIZE + rowIdxTile < d) 
+            if (nTile*TILE_SIZE + rowIdxTile < d) {
                 cur = V[nTile*TILE_SIZE + rowIdxTile];
                 Ts[rowIdxTile] = cur;
                 if (nTile*TILE_SIZE + rowIdxTile == rowIdx) {
                     res = cur;
                 }
-            else
+            }
+            else {
                 Ts[rowIdxTile] = 0.0f;
+            }
 
             __syncthreads();
 
             for (int i=0; i < TILE_SIZE; i++) {
-                tot += __expf(Ts[i]);
-                max = fmaxf(max, Ts[i]);
+                max = fmaxf(max_prev, Ts[i]);
+                if (max == max_prev) {
+                    tot += __expf(Ts[i] - max);
+                }
+                else {
+                    tot = tot * __expf(max_prev - max) + 1; // 1=__expf(Ts[i] - max) if max != max_prev
+                    max_prev = max;
+                }
             }
             __syncthreads();
 
         };
 
 
-        O[rowIdx] = __expf(res-max)/(tot * __expf(-max)); // (1 div + 1 write) * d threads;
+        O[rowIdx] = __expf(res-max)/tot; // (1 div + 1 write) * d threads;
     }   
 }
 

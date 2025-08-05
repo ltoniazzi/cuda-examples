@@ -31,9 +31,9 @@ def profile_kernel(module, fname, *args, **kwargs):
 
 if __name__ =="__main__":
     from pathlib import Path
-    cuda_source_path = Path(__file__).parent.parent / "softmax/softmax.cu"
+    cuda_source_path = Path(__file__).parent.parent / "softmax_1d/softmax_naive.cu"
     cuda_source = cuda_source_path.read_text()
-    fname = "softmax"
+    fname = "softmax_naive"
     cpp_source = get_sig(fname, cuda_source)
     # print(cpp_source)
     module = load_cuda(cuda_source, cpp_source, funcs=[fname], verbose=True, opt=True)

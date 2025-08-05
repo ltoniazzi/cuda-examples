@@ -56,7 +56,7 @@ __global__ void softmax_fast_kernel(float* input, float* output, int d) {
 }
 
 
-torch::Tensor softmax(torch::Tensor V) {
+torch::Tensor softmax_fast(torch::Tensor V) {
     CHECK_INPUT(V);
     TORCH_CHECK(V.dim() == 1, "Input must be a 1D tensor");
 
