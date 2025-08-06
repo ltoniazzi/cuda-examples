@@ -17,9 +17,12 @@ inline void gpuQssert(cudaError_t code, const char *file, int line, bool abort=t
 __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b;}
 
 
+
 // MatMul kernel
 __global__ void fused_softmax_matmul_kernel(float* Q, float* K, float* O, int h, int w, int k) {
-    const int TILE_SIZE = 32; // Define the tile size
+    const int TILE_SIZE = 32; // Define the tile size TODO make global
+    // const float tau = 1/sqrtf((float)w); # TODO scaling of P seems to introduce mor enumerical instability
+
     __shared__ float Qs[TILE_SIZE][TILE_SIZE];
     __shared__ float Ks[TILE_SIZE][TILE_SIZE];
     __shared__ float P[TILE_SIZE][TILE_SIZE];
