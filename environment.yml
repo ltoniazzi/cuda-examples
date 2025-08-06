@@ -1,0 +1,17 @@
+name: cuda-examples
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.12
+  - pytorch
+  - torchvision
+  - pytorch-cuda
+  - ninja
+  - wurlitzer
+  - matplotlib
+  - pandas
+  - numba
+  - ipykernel
