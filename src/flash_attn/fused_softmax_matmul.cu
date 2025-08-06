@@ -22,6 +22,7 @@ __global__ void fused_softmax_matmul_kernel(float* Q, float* K, float* O, int h,
     const int TILE_SIZE = 32; // Define the tile size
     __shared__ float Qs[TILE_SIZE][TILE_SIZE];
     __shared__ float Ks[TILE_SIZE][TILE_SIZE];
+    __shared__ float P[TILE_SIZE][TILE_SIZE];
 
     // Identify thread and map to matrix indices
     int rowIdx = blockIdx.y*blockDim.y + threadIdx.y;
@@ -30,61 +31,87 @@ __global__ void fused_softmax_matmul_kernel(float* Q, float* K, float* O, int h,
     int colIdxTile = threadIdx.x; 
 
 
-    int nTilesHors = cdiv(w, TILE_SIZE);
-    int nTileInns = cdiv(k, TILE_SIZE);
+    int nTilesToSpanKs = cdiv(w, TILE_SIZE);
+    int nTileInnerProds = cdiv(k, TILE_SIZE);
 
     float denominator = 0.0f;
     float numerator_exponent = 0.0f;
-    float max_new = -INFINITY;
-    float max_prev = -INFINITY;
+    float max_cur = -INFINITY;
+    float max_with_new_block = -INFINITY;
 
-    for (int nTilesHor=0; nTilesHor < nTilesHors; nTilesHor++) {
-        float res_inn = 0.0f;
+    // Span acros K's witdth in blocks of TILE_SIZE
+    for (int nTilesToSpanK=0; nTilesToSpanK < nTilesToSpanKs; nTilesToSpanK++) {
 
-        for (int nTileInn=0; nTileInn < nTileInns; nTileInn++) {
-            if (rowIdx < h && nTileInn * TILE_SIZE + colIdxTile < k) 
+        // Load blocks of Q and K to compute the the matmul block P for the corresponding rows of Q
+        for (int nTileInnerProd=0; nTileInnerProd < nTileInnerProds; nTileInnerProd++) {
+            if (rowIdx < h && nTileInnerProd * TILE_SIZE + colIdxTile < k) {
                 Qs[rowIdxTile][colIdxTile] = Q[
                     rowIdx * k                         // Go to the right row
-                    + nTileInn * TILE_SIZE + colIdxTile    // Iterate on the respecctive tile element in each tile
+                    + nTileInnerProd * TILE_SIZE + colIdxTile    // Iterate on the respecctive tile element in each tile
                 ];
-            else
+            }
+            else {
                 Qs[rowIdxTile][colIdxTile] = 0.0f;
+            }
 
-            if (nTileInn * TILE_SIZE + rowIdxTile < k && nTilesHor*TILE_SIZE + colIdxTile < w)
+            if (nTileInnerProd * TILE_SIZE + rowIdxTile < k && nTilesToSpanK*TILE_SIZE + colIdxTile < w) {
                 Ks[rowIdxTile][colIdxTile] = K[
                     w * (
-                        nTileInn*TILE_SIZE   // number of rows to skip for the previuous tiles
+                        nTileInnerProd*TILE_SIZE   // number of rows to skip for the previuous tiles
                         + rowIdxTile    // number of rows to skip for the current tile
                     ) 
-                    + nTilesHor*TILE_SIZE + colIdxTile                        // Go to the right column scanning horizontally
+                    + nTilesToSpanK*TILE_SIZE + colIdxTile                        // Go to the right column scanning horizontally
                 ];
-            else
+            }
+            else {
                 Ks[rowIdxTile][colIdxTile] = 0.0f;
+            }
             __syncthreads();
             
-            for (int tile_k=0; tile_k< TILE_SIZE; tile_k++) {
-                res_inn += Qs[rowIdxTile][tile_k] * Ks[tile_k][colIdxTile];
-            };
-            if (nTilesHor*TILE_SIZE + colIdxTile == colIdx) {
-                numerator_exponent = res_inn;
+            P[rowIdxTile][colIdxTile] = 0.0f;
+            for (int tile_k=0; tile_k < TILE_SIZE; tile_k++) {
+                P[rowIdxTile][colIdxTile] += Qs[rowIdxTile][tile_k] * Ks[tile_k][colIdxTile];
             }
+        
             __syncthreads();
         }
     
-        max_new = fmaxf(max_prev, res_inn);
-        if (max_new == max_prev) {
-            denominator += __expf(res_inn - max_new);
+        // Get max from the corresponding row of P to make softmax safe
+        for (int tile_k=0; tile_k < TILE_SIZE; tile_k++) {
+            max_with_new_block = fmaxf(max_with_new_block, P[rowIdxTile][tile_k]); 
+        }
+        
+        // If the rowmax in P is not changed, then only add the safe exponents
+        if (max_cur == max_with_new_block) {
+            for (int tile_k=0; tile_k < TILE_SIZE; tile_k++) {
+                denominator += __expf(P[rowIdxTile][tile_k] - max_cur); 
+            }
         }
         else {
-            denominator = denominator * __expf(max_prev - max_new) + 1.0f;
-            max_new = max_prev;
+            // else, if the rowmax in P has increased, then:
+            // Rescale previous denominator (fine when max_cur=-INF as denominator=0 then)
+            denominator = denominator * __expf(max_cur - max_with_new_block);
+            // Add the safe exponents
+            for (int tile_k=0; tile_k < TILE_SIZE; tile_k++) {
+                denominator += __expf(P[rowIdxTile][tile_k] - max_with_new_block);
+                 
+            }
+            // Update the block max for next iteration
+            max_cur = max_with_new_block;
         }
+
+        // if the horizontal span is on the threads column, then we have the numerator exponent in P
+        if (nTilesToSpanK * TILE_SIZE + colIdxTile == colIdx) {
+            numerator_exponent = P[rowIdxTile][colIdxTile];
+        }
+
+        __syncthreads(); // not needed as P not touched until next sync
 
     }
 
     if (rowIdx < h && colIdx < w) {
-        O[w*rowIdx + colIdx] = __expf(numerator_exponent - max_new)/denominator;
-    };
+        O[w * rowIdx + colIdx] = __expf(numerator_exponent - max_cur)/(denominator);
+    }
 
 }
 
