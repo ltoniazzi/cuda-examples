@@ -27,7 +27,7 @@ extern "C" __global__ void silly_attn(
     __shared__ float V_j[B_c][d];  // 16 x 128
 
     // Local accumulators per thread for output block
-    float O_i[B_r][d];
+    float O_i[B_r][d/4];
     float l_i[B_r];
     float m_i[B_r];
     // S_i: B_c temporary storage for scores
@@ -41,7 +41,7 @@ extern "C" __global__ void silly_attn(
         for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 Q_i[ii][dd] = Q[(ii + i * B_r) * d + dd];
-                O_i[ii][dd] = 0.0f;
+                O_i[ii][dd/4] = 0.0f;
             }
             l_i[ii] = 0.0f;
             m_i[ii] = -INFINITY;
@@ -80,20 +80,20 @@ extern "C" __global__ void silly_attn(
                 float l = exp(last_m - m) * l_i[ii];
 
                 for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                    O_i[ii][dd] *= exp(last_m - m); // Scale row elements
+                    O_i[ii][dd/4] *= exp(last_m - m); // Scale row elements
                 }
 
                 for (int jj = 0; jj < B_c; jj++) {
                     float S_ij = exp(S_i[jj] - m);
                     l += S_ij;
                     for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                        O_i[ii][dd] +=  S_ij * V_j[jj][dd];
+                        O_i[ii][dd/4] +=  S_ij * V_j[jj][dd];
                     }
                 }
                 l_i[ii] = l;
 
                 for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                    out[(ii + i * B_r) * d + dd] = O_i[ii][dd] / l_i[ii];
+                    out[(ii + i * B_r) * d + dd] = O_i[ii][dd/4] / l_i[ii];
                 }
                 out_l[ii + i * B_r] = l_i[ii]; 
             }
