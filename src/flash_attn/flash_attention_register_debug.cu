@@ -50,35 +50,14 @@ extern "C" __global__ void silly_attn(
 
         for (int j = 0; j < T_c; j++){
             // Load K_j, V_j into shared memory
-            for (int jj = tid_y; jj < B_c; jj += blockDim.y) {
-                for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                    K_j[jj][dd] = K[(jj + j * B_c) * d + dd];
-                    V_j[jj][dd] = V[(jj + j * B_c) * d + dd];
-                }
-            }
+            
             __syncthreads();
             // S_i = scaling * Q_i @ K_j.T
             for (int ii = tid_x; ii < B_r; ii += blockDim.x) {
-                for (int jj = tid_y; jj < B_c; jj += blockDim.y) {
-                    float S_ij = 0.0f;
-                    for (int dd = 0; dd < d; dd ++) {
-                        S_ij += Q_i[ii][dd] * K_j[jj][dd];
-                    }
-                    S_ij = scaling * S_ij;
-                    S_i[jj] = S_ij;
-                }
+                
                 __syncthreads();
                 
-                float m = m_i[ii];
-                float last_m = m;
-                for (int jj = 0; jj < B_c; jj++) {
-                    if (m < S_i[jj]) {
-                        m = S_i[jj];
-                    }
-                }
-                m_i[ii] = m;
-                float l = exp(last_m - m) * l_i[ii];
-
+                
                 for (int dd = tid_x; dd < d; dd += blockDim.x) {
                     O_i[ii][dd] *= exp(last_m - m); // Scale row elements
                 }
@@ -106,7 +85,7 @@ extern "C" __global__ void silly_attn(
 __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b; }
 
 
-std::tuple<torch::Tensor, torch::Tensor> silly_attention(torch::Tensor K, torch::Tensor Q, torch::Tensor V) {
+std::tuple<torch::Tensor, torch::Tensor> flash_attention_register_spilling(torch::Tensor K, torch::Tensor Q, torch::Tensor V) {
     int n = Q.size(0);
     int n_inp = K.size(0);
     int d = Q.size(1);
