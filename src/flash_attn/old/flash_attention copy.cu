@@ -5,9 +5,9 @@ constexpr int B_c = 16;
 constexpr int d = 128;
 constexpr int n_out_max = 4096;
 constexpr int block_dim_x = 32;
-constexpr int block_dim_y = 4;
-constexpr int o_per_thread_x = d / block_dim_x;
-constexpr int o_per_thread_y = B_r / block_dim_y;
+constexpr int block_dim_y = 32;
+constexpr int o_per_thread_x = 1;
+constexpr int o_per_thread_y = 128 / 32;
 
 
 
@@ -27,29 +27,35 @@ extern "C" __global__ void flash_attention_k(
     int tid_y = threadIdx.y; // 0..31 (block_y_dim)
 
     // Shared memory buffers for Q, K, V blocks
-    __shared__ float Q_i[B_r][d];       // 16 x 128
-    __shared__ float K_j[B_c][d];       // 16 x 128
-    __shared__ float V_j[B_c][d];       // 16 x 128
-    __shared__ float S[B_r][B_c];     //16 X 16
+    __shared__ float Q_i[B_r][d];  // 16 x 128
+    __shared__ float K_j[B_c][d];  // 16 x 128
+    __shared__ float V_j[B_c][d];  // 16 x 128
+    __shared__ float S_i[B_r][B_c];     // 16
 
     // Local accumulators per thread for output block
-
-    float l_i[o_per_thread_y];
-    float m_i[o_per_thread_y];
-    float O_i[o_per_thread_y][o_per_thread_x];
-    // float S[B_c];
+    // float O_i[B_r][d];
+    // float l_i[B_r];
+    // float m_i[B_r];
+    float l_i[o_per_thread_x];
+    float m_i[o_per_thread_x];
+    float O_i[o_per_thread_x][o_per_thread_y];
+    // float S_i[B_c];
 
     // Loop over output tile blocks (T_r)
     for (int i = 0; i < T_r; i++) {
         // Init O_i, l_i, m_i into registers
+        for (int ii = 0; ii < o_per_thread_x; ii++) {
+            for (int dd = 0; dd < o_per_thread_y; dd++) {
+                O_i[ii][dd] = 0;
+            }
+            l_i[ii] = 0.f;
+            m_i[ii] = -INFINITY;
+        }
         // Load Q_i tile into shared mem
         for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 Q_i[ii][dd] = Q[(ii + i * B_r) * d + dd];
-                O_i[ii/block_dim_y][dd/block_dim_x] = 0;
             }
-            l_i[ii/block_dim_y] = 0.f;
-            m_i[ii/block_dim_y] = -INFINITY;
         }
         __syncthreads();
 
@@ -62,7 +68,7 @@ extern "C" __global__ void flash_attention_k(
                 }
             }
             __syncthreads();
-            // S[ii][jj] = scaling * Q_i @ K_j.T
+            // S_i = scaling * Q_i @ K_j.T
             for (int ii = tid_x; ii < B_r; ii += blockDim.x) {
                 for (int jj = tid_y; jj < B_c; jj += blockDim.y) {
                     float S_ij = 0.0f;
@@ -70,41 +76,42 @@ extern "C" __global__ void flash_attention_k(
                         S_ij += Q_i[ii][dd] * K_j[jj][dd];
                     }
                     S_ij = scaling * S_ij;
-                    S[ii][jj] = S_ij;
+                    S_i[ii][jj] = S_ij;
                 }
             }
             __syncthreads();
-            for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
-                float m = m_i[ii/block_dim_y];
+            for (int ii = 0; ii < o_per_thread_x; ii++) {
+                float m = m_i[ii];
                 float last_m = m;
                 for (int jj = 0; jj < B_c; jj++) {
-                    if (m < S[ii][jj]) {
-                        m = S[ii][jj];
+                    if (m < S_i[ii * blockDim.x + tid_x][jj]) {
+                        m = S_i[ii * blockDim.x + tid_x][jj];
                     }
                 }
-                m_i[ii/block_dim_y] = m;
-                float l = exp(last_m - m) * l_i[ii/block_dim_y];
+                m_i[ii] = m;
+                float l = exp(last_m - m) * l_i[ii];
 
-                for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                    O_i[ii/block_dim_y][dd/block_dim_x] *= exp(last_m - m);
+                for (int dd = 0; dd < o_per_thread_y; dd ++) {
+                    O_i[ii][dd] *= exp(last_m - m); // Scale row elements
                 }
 
                 for (int jj = 0; jj < B_c; jj++) {
-                    float P_ij = exp(S[ii][jj] - m);
-                    l += P_ij;
-                    for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                        O_i[ii/block_dim_y][dd/block_dim_x] +=  P_ij * V_j[jj][dd];
+                    float S_ij = exp(S_i[ii * blockDim.x + tid_x][jj] - m);
+                    l += S_ij;
+                    for (int dd = 0; dd < o_per_thread_y; dd ++) {
+                        O_i[ii][dd] +=  S_ij * V_j[jj][dd * blockDim.y + tid_y];
                     }
                 }
-                l_i[ii/block_dim_y] = l;
+                l_i[ii] = l;
+
             }
-        }
-        __syncthreads();
-        for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
-            for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                out[(ii + i * B_r) * d + dd] = O_i[ii/block_dim_y][dd/block_dim_x] / l_i[ii/block_dim_y];
+            for (int ii = 0; ii < o_per_thread_x; ii++) {
+                for (int dd = 0; dd < o_per_thread_y; dd ++) {
+                    out[(ii * blockDim.x + tid_x + i * B_r) * d + dd * blockDim.y + tid_y] = O_i[ii][dd] / l_i[ii];
+                
+                }
+                out_l[ii * blockDim.x + tid_x + i * B_r] = l_i[ii];
             }
-            out_l[ii + i * B_r] = l_i[ii/block_dim_y];
         }
     }
 }
