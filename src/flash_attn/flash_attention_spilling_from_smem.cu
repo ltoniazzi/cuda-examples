@@ -3,12 +3,10 @@
 constexpr int B_r = 16;
 constexpr int B_c = 16;
 constexpr int d = 128;
+constexpr int n_out_max = 4096;
 constexpr int block_dim_x = 32;
 constexpr int block_dim_y = 16;
-constexpr int o_per_thread_x = d / block_dim_x;
-constexpr int o_per_thread_y = B_r / block_dim_y;
 
-#define NEG_INFINITY __int_as_float(0xff800000)
 
 
 extern "C" __global__ void flash_attention_k(
@@ -33,11 +31,10 @@ extern "C" __global__ void flash_attention_k(
     __shared__ float S[B_r][B_c];     //16 X 16
 
     // Local accumulators per thread for output block
-
-    float l_i[o_per_thread_y];
-    float m_i[o_per_thread_y];
-    float O_i[o_per_thread_y][o_per_thread_x];
-    // float S[B_c];
+    // No need to be shared and creating spills, too large
+    __shared__ float l_i[B_r];
+    __shared__ float m_i[B_r];
+    __shared__ float O_i[B_r][d];
 
     // Loop over output tile blocks (T_r)
     for (int i = 0; i < T_r; i++) {
@@ -46,10 +43,10 @@ extern "C" __global__ void flash_attention_k(
         for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 Q_i[ii][dd] = Q[(ii + i * B_r) * d + dd];
-                O_i[ii/block_dim_y][dd/block_dim_x] = 0;
+                O_i[ii][dd] = 0;
             }
-            l_i[ii/block_dim_y] = 0.f;
-            m_i[ii/block_dim_y] = NEG_INFINITY;
+            l_i[ii] = 0.f;
+            m_i[ii] = -INFINITY;
         }
         __syncthreads();
 
@@ -75,36 +72,36 @@ extern "C" __global__ void flash_attention_k(
             }
             __syncthreads();
             for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
-                float m = m_i[ii/block_dim_y];
+                float m = m_i[ii];
                 float last_m = m;
                 for (int jj = 0; jj < B_c; jj++) {
                     if (m < S[ii][jj]) {
                         m = S[ii][jj];
                     }
                 }
-                m_i[ii/block_dim_y] = m;
-                float l = exp(last_m - m) * l_i[ii/block_dim_y];
+                m_i[ii] = m;
+                float l = exp(last_m - m) * l_i[ii];
 
                 for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                    O_i[ii/block_dim_y][dd/block_dim_x] *= exp(last_m - m);
+                    O_i[ii][dd] *= exp(last_m - m);
                 }
 
                 for (int jj = 0; jj < B_c; jj++) {
                     float P_ij = exp(S[ii][jj] - m);
                     l += P_ij;
                     for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                        O_i[ii/block_dim_y][dd/block_dim_x] +=  P_ij * V_j[jj][dd];
+                        O_i[ii][dd] +=  P_ij * V_j[jj][dd];
                     }
                 }
-                l_i[ii/block_dim_y] = l;
+                l_i[ii] = l;
             }
         }
         __syncthreads();
         for (int ii = tid_y; ii < B_r; ii += blockDim.y) {
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
-                out[(ii + i * B_r) * d + dd] = O_i[ii/block_dim_y][dd/block_dim_x] / l_i[ii/block_dim_y];
+                out[(ii + i * B_r) * d + dd] = O_i[ii][dd] / l_i[ii];
             }
-            out_l[ii + i * B_r] = l_i[ii/block_dim_y];
+            out_l[ii + i * B_r] = l_i[ii];
         }
     }
 }
@@ -114,11 +111,12 @@ extern "C" __global__ void flash_attention_k(
 __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b; }
 
 
-std::tuple<torch::Tensor, torch::Tensor> flash_attention(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
+std::tuple<torch::Tensor, torch::Tensor> flash_attention_spilling_from_smem(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
     int n = Q.size(0);
     int n_inp = K.size(0);
     int d = Q.size(1);
     
+    assert (n_out_max >= n && "Max size of rows exceeded!");
     assert (d == V.size(1) && "Size mismatch!");
     assert (d == K.size(1) && "Size mismatch!");
     assert (K.size(0) == V.size(0) && "Size mismatch!");
@@ -145,3 +143,4 @@ std::tuple<torch::Tensor, torch::Tensor> flash_attention(torch::Tensor Q, torch:
     );
     return std::make_tuple(out, out_l);
 }
+

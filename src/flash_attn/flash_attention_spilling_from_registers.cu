@@ -5,7 +5,7 @@ constexpr int B_c = 16;
 constexpr int d = 128;
 constexpr int n_out_max = 4096;
 constexpr int block_dim_x = 32;
-constexpr int block_dim_y = 4;
+constexpr int block_dim_y = 16;
 
 
 
@@ -112,7 +112,7 @@ extern "C" __global__ void flash_attention_k(
 __host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b; }
 
 
-std::tuple<torch::Tensor, torch::Tensor> flash_attention_spilling(torch::Tensor K, torch::Tensor Q, torch::Tensor V) {
+std::tuple<torch::Tensor, torch::Tensor> flash_attention_spilling_from_registers(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
     int n = Q.size(0);
     int n_inp = K.size(0);
     int d = Q.size(1);
