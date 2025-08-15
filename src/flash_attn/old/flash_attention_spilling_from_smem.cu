@@ -101,7 +101,7 @@ extern "C" __global__ void flash_attention_k(
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 out[(ii + i * B_r) * d + dd] = O_i[ii][dd] / l_i[ii];
             }
-            out_l[ii + i * B_r] = l_i[ii];
+            out_l[ii + i * B_r] = m_i[ii] + log(l_i[ii]);
         }
     }
 }

@@ -1,5 +1,3 @@
-#include <math_constants.h>
-
 constexpr int B_r = 16;
 constexpr int B_c = 16;
 constexpr int d = 128;
@@ -14,8 +12,8 @@ constexpr int o_per_thread_y = B_r / block_dim_y;
 extern "C" __global__ void flash_attention_k(
     float *out, 
     float *out_l, 
+    float *Q,
     float *K, 
-    float *Q, 
     float *V, 
     float scaling, 
     int n, 
@@ -33,11 +31,9 @@ extern "C" __global__ void flash_attention_k(
     __shared__ float S[B_r][B_c];     //16 X 16
 
     // Local accumulators per thread for output block
-
     float l_i[o_per_thread_y];
     float m_i[o_per_thread_y];
     float O_i[o_per_thread_y][o_per_thread_x];
-    // float S[B_c];
 
     // Loop over output tile blocks (T_r)
     for (int i = 0; i < T_r; i++) {
@@ -104,44 +100,8 @@ extern "C" __global__ void flash_attention_k(
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 out[(ii + i * B_r) * d + dd] = O_i[ii/block_dim_y][dd/block_dim_x] / l_i[ii/block_dim_y];
             }
-            out_l[ii + i * B_r] = l_i[ii/block_dim_y];
+            out_l[ii + i * B_r] = m_i[ii/block_dim_y] + log(l_i[ii/block_dim_y]);
         }
     }
 }
 
-
-
-__host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b; }
-
-
-std::tuple<torch::Tensor, torch::Tensor> flash_attention(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
-    int n = Q.size(0);
-    int n_inp = K.size(0);
-    int d = Q.size(1);
-    
-    assert (d == V.size(1) && "Size mismatch!");
-    assert (d == K.size(1) && "Size mismatch!");
-    assert (K.size(0) == V.size(0) && "Size mismatch!");
-    auto out = torch::zeros({n, d}, Q.options());
-    auto out_l = torch::zeros({n,}, Q.options());
-
-    float scaling = 1.0f / sqrt((float)d);
-
-    int T_r = cdiv(n, B_r);
-    int T_c = cdiv(n_inp, B_c);
-
-    dim3 blocks(1, 1);      
-    dim3 tpb(block_dim_x, block_dim_y); 
-    flash_attention_k<<<blocks, tpb>>>(
-        out.data_ptr<float>(),
-        out_l.data_ptr<float>(),
-        K.data_ptr<float>(), 
-        Q.data_ptr<float>(), 
-        V.data_ptr<float>(), 
-        scaling,
-        n,
-        T_r,
-        T_c
-    );
-    return std::make_tuple(out, out_l);
-}

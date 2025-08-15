@@ -1,5 +1,3 @@
-#include <math_constants.h>
-
 constexpr int B_r = 16;
 constexpr int B_c = 16;
 constexpr int d = 128;
@@ -7,13 +5,14 @@ constexpr int n_out_max = 4096;
 constexpr int block_dim_x = 32;
 constexpr int block_dim_y = 16;
 
+#define NEG_INFINITY __int_as_float(0xff800000)
 
 
-extern "C" __global__ void flash_attention_k(
+extern "C" __global__ void flash_attention_spilling_from_registers_k(
     float *out, 
     float *out_l, 
+    float *Q,
     float *K, 
-    float *Q, 
     float *V, 
     float scaling, 
     int n, 
@@ -28,14 +27,14 @@ extern "C" __global__ void flash_attention_k(
     __shared__ float Q_i[B_r][d];       // 16 x 128
     __shared__ float K_j[B_c][d];       // 16 x 128
     __shared__ float V_j[B_c][d];       // 16 x 128
-    __shared__ float S[B_r][B_c];     //16 X 16
+    __shared__ float S[B_r][B_c];       //16 X 16
 
     // Local accumulators per thread for output block
-
+    // !!! These will spill !!!
     float l_i[B_r];
     float m_i[B_r];
     float O_i[B_r][d];
-    // float S[B_c];
+
 
     // Loop over output tile blocks (T_r)
     for (int i = 0; i < T_r; i++) {
@@ -47,7 +46,7 @@ extern "C" __global__ void flash_attention_k(
                 O_i[ii][dd] = 0;
             }
             l_i[ii] = 0.f;
-            m_i[ii] = -INFINITY;
+            m_i[ii] = NEG_INFINITY;
         }
         __syncthreads();
 
@@ -102,46 +101,11 @@ extern "C" __global__ void flash_attention_k(
             for (int dd = tid_x; dd < d; dd += blockDim.x) {
                 out[(ii + i * B_r) * d + dd] = O_i[ii][dd] / l_i[ii];
             }
-            out_l[ii + i * B_r] = l_i[ii];
+            out_l[ii + i * B_r] = m_i[ii] + log(l_i[ii]);
         }
     }
 }
 
 
 
-__host__ __device__ inline unsigned int cdiv(unsigned int a, unsigned int b) { return (a+b-1)/b; }
-
-
-std::tuple<torch::Tensor, torch::Tensor> flash_attention_spilling_from_registers(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
-    int n = Q.size(0);
-    int n_inp = K.size(0);
-    int d = Q.size(1);
-    
-    assert (n_out_max >= n && "Max size of rows exceeded!");
-    assert (d == V.size(1) && "Size mismatch!");
-    assert (d == K.size(1) && "Size mismatch!");
-    assert (K.size(0) == V.size(0) && "Size mismatch!");
-    auto out = torch::zeros({n, d}, Q.options());
-    auto out_l = torch::zeros({n,}, Q.options());
-
-    float scaling = 1.0f / sqrt((float)d);
-
-    int T_r = cdiv(n, B_r);
-    int T_c = cdiv(n_inp, B_c);
-
-    dim3 blocks(1, 1);      
-    dim3 tpb(block_dim_x, block_dim_y); 
-    flash_attention_k<<<blocks, tpb>>>(
-        out.data_ptr<float>(),
-        out_l.data_ptr<float>(),
-        K.data_ptr<float>(), 
-        Q.data_ptr<float>(), 
-        V.data_ptr<float>(), 
-        scaling,
-        n,
-        T_r,
-        T_c
-    );
-    return std::make_tuple(out, out_l);
-}
 
