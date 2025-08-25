@@ -33,6 +33,7 @@ class MatMul:
     def backward(self, grad_output): # M
         # Compute dL/dW = grad_output * input
         d_weights =  self.input.T @ grad_output # M, 1 * (1, N) = M, N
+        self.weight.grad = d_weights.expand_as(self.weight)
 
         # compute dL/dinput to pass to next step 
         grad_output = grad_output @ self.weight.T
