@@ -1,4 +1,7 @@
 # Tritol kernel for softmax
+import os
+os.environ['TRITON_INTERPRET'] = '1' # needs to be set *before* triton is imported
+
 import triton 
 import triton.language as tl
 import torch
@@ -40,6 +43,21 @@ def softmax(M):
     return S  
 
 
+class SoftMax:
+    def __init__(self):
+        self.input = None # M, N
+        self.output = None # M, N
+
+    def forward(self, input):
+        self.input = input
+        self.output = softmax(input)
+        return self.output
+
+    def backward(self, grad_output): # M
+        # Compute dL/dW = grad_output * input
+        d_softmax = torch.mul(self.output, (torch.ones_like(self.output) - self.output )) # M, 1 * (1, N) = M, N
+        return d_softmax
+    
 
 class MatMul:
 
@@ -61,3 +79,16 @@ class MatMul:
 
         # Free resources
         return d_weights, grad_output
+    
+
+if __name__ == "__main__":
+    
+    M = torch.Tensor([
+        [1.0, 2.0],
+        [3.0, 5.0],
+    ])
+    S = softmax(M)
+    print("S ", S)
+
+    S_torch = torch.nn.functional.softmax(M, dim=-1)
+    print("S_torch ", S_torch)
