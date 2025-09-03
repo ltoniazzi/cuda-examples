@@ -15,9 +15,13 @@ def softmax_kernel(M_ptr, S_ptr, n_rows: tl.constexpr, n_cols: tl.constexpr):
     pid = tl.program_id(0)
     if pid < n_rows:
 
-        offs = pid*n_cols + tl.arange(0, n_rows)
+        offs = pid*n_cols + tl.arange(0, n_cols)
 
         row = tl.load(M_ptr + offs)
+
+        # Stabilization step: subtract max value
+        row_max = tl.max(row, axis=0)
+        row = row - row_max
 
         row = tl.exp(row)
 
@@ -38,7 +42,7 @@ def softmax(M):
     # - kernel_fn is the triton kernel, which we write below
     # - grid is the grid we constructed above
     # - x,z,n,bs are paramters that are passed into each kernel function
-    softmax_kernel[grid](M,S,n_rows, n_cols)
+    softmax_kernel[grid](M, S, n_rows, n_cols)
 
     return S  
 
@@ -67,17 +71,17 @@ class MatMul:
 
     def forward(self, input):
         self.input = input
+        # x @ M
         return input @ self.weight
 
     def backward(self, grad_output): # M
         # Compute dL/dW = grad_output * input
         d_weights =  self.input.T @ grad_output # M, 1 * (1, N) = M, N
-        self.weight.grad = d_weights.expand_as(self.weight)
+        self.weight.grad = d_weights
 
         # compute dL/dinput to pass to next step 
         grad_output = grad_output @ self.weight.T
 
-        # Free resources
         return d_weights, grad_output
     
 
@@ -87,8 +91,12 @@ if __name__ == "__main__":
         [1.0, 2.0],
         [3.0, 5.0],
     ])
+    N_row, N_col = 4, 8
+    M = torch.rand((N_row, N_col), requires_grad=True)
     S = softmax(M)
     print("S ", S)
 
     S_torch = torch.nn.functional.softmax(M, dim=-1)
     print("S_torch ", S_torch)
+    assert torch.allclose(S, S_torch, atol=1e-6), "Gradients for W1 are not equal"
+

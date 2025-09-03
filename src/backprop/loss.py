@@ -9,6 +9,7 @@ class Loss:
         
     def mse_loss(self, y, y_true):
 
+        # y = y.squeeze(-1)
         self.loss = torch.mean(
             torch.square(y-y_true)
         )
@@ -17,7 +18,7 @@ class Loss:
     
     def backward(self):
         dL_dy = self.loss_grad
-        dy_dW2, grad_output_W2 = self.model.layer_2.backward(dL_dy)
+        dy_dW2, grad_output_W2 = self.model.layer_2.backward(dL_dy.unsqueeze(-1))
         d_softmax = self.model.act.backward(grad_output_W2)
         dS_dW1, grad_output_W1 = self.model.layer_1.backward(d_softmax)
         return dS_dW1
