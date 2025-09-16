@@ -120,13 +120,16 @@ L.backward()
 model_torch = TorchAttentionNN(W1_clone, W2_clone)
 y_torch = model_torch(x_clone)
 L_torch = F.mse_loss(y_torch, y_true)
+y_torch.retain_grad()
 L_torch.backward()
+
+print(f"{y_torch.grad=}")
 
 # Assert that the losses are approximately equal
 assert torch.allclose(y, y_torch, atol=1e-6), "Losses are not equal"
 assert torch.allclose(loss, L_torch, atol=1e-6), "Losses are not equal"
 
 # Assert that the gradients are approximately equal
-assert torch.allclose(W1.grad, model_torch.layer_1.weight.grad, atol=1e-6), "Gradients for W1 are not equal"
-assert torch.allclose(W2.grad, model_torch.layer_2.weight.grad, atol=1e-6), "Gradients for W2 are not equal"
+assert torch.allclose(W2.grad.T, model_torch.layer_2.weight.grad, atol=1e-6), "Gradients for W2 are not equal"
+assert torch.allclose(W1.grad.T, model_torch.layer_1.weight.grad, atol=1e-6), "Gradients for W1 are not equal"
 assert torch.allclose(x.grad, x_clone.grad, atol=1e-6), "Gradients for x are not equal"
