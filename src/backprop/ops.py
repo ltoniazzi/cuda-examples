@@ -59,8 +59,20 @@ class SoftMax:
 
     def backward(self, grad_output): # M
         # Compute dL/dW = grad_output * input
-        d_softmax = torch.mul(self.output, (torch.ones_like(self.output) - self.output )) # M, 1 * (1, N) = M, N
-        return d_softmax
+        batch_size, num_classes = self.output.shape
+        d_softmax = torch.zeros(batch_size, num_classes, num_classes, device=self.output.device)
+
+        for i in range(batch_size):
+            for j in range(num_classes):
+                for k in range(num_classes):
+                    if j == k:
+                        d_softmax[i, j, k] = self.output[i, j] * (1 - self.output[i, j])
+                    else:
+                        d_softmax[i, j, k] = -self.output[i, j] * self.output[i, k]
+
+        # Compute the gradient for the input (dy/dx)
+        grad_input = torch.matmul(d_softmax, grad_output.unsqueeze(-1)).squeeze(-1)
+        return grad_input
     
 
 class MatMul:
