@@ -4,3 +4,7 @@ ninja
 wurlitzer
 matplotlib
 pandas
+numba
+ipykernel
+nvidia-cuda-nvcc 
+nvidia-cuda-nvrtc
