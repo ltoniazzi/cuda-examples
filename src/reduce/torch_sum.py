@@ -3,7 +3,9 @@ import torch
 
 device = "cpu"
 
-x = torch.Tensor([1, 2, 3]).to("cuda")
+size = 2048
+
+x = torch.Tensor([1.0]*size).to("cuda")
 
 res = torch.sum(x)
 

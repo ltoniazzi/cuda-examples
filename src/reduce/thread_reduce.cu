@@ -16,12 +16,12 @@ __global__ void ThreadSumReductionKernel(
 
     // Start log(N) steps
     for (int stride = 1; stride <= block_dim; stride*=2) {
-        // Am i and active thread at this step?
+        // Am I and active thread at this step?
         if (thread_id % stride == 0 ) {
             // Add mine with the value at the stride
             input[thread_write_location] += input[thread_write_location + stride];  // sum iteratively
         }
-        // Hey other threads in the block, can we move to next step???
+        // Hey other threads in the block, are you all done???
         __syncthreads();
     }
     if (thread_id == 0){

@@ -4,7 +4,7 @@
 
 # define MAX_THREADS 1024
 
-__global__ void BlockSumReductionKernel(float* input, float* output) {
+__global__ void BlockUnrollSumReductionKernel(float* input, float* output) {
     // Super-fast but super small memory shared in the block
     __shared__ float input_shared[MAX_THREADS];  
     int thread_id = threadIdx.x;
@@ -25,7 +25,7 @@ __global__ void BlockSumReductionKernel(float* input, float* output) {
     // Now reduce summing with the new input_shared of size 1024, start from stride=1  to block_dim/2=512
     for (int stride = 1; stride <= block_dim/4; stride *= 4) {
         if ( thread_id % (4 * stride) == 0 ) {
-            input_shared[thread_id] += input_shared[thread_id + stride] + input_shared[thread_id + stride *2] + input_shared[thread_id + stride * 3];
+            input_shared[thread_id] += input_shared[thread_id + stride] + input_shared[thread_id + stride * 2] + input_shared[thread_id + stride * 3];
         }
          __syncthreads();
     }
@@ -76,7 +76,7 @@ int main() {
     std::cout << "\nExpected result: " << size << std::endl;
 
 
-    BlockSumReductionKernel<<<n_blocks, n_threads>>>(d_input, d_output);
+    BlockUnrollSumReductionKernel<<<n_blocks, n_threads>>>(d_input, d_output);
 
     // Copy result back to host
     cudaMemcpy(h_output, d_output, sizeof(float), cudaMemcpyDeviceToHost);
