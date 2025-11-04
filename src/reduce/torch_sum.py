@@ -33,15 +33,28 @@ print(res)
 
 
 
-input_array = [1, 2, 3]
+input = [1, 2, 3]
+output = None
 
-# Initialise
-sum = 0
-# Sum in sequence
-for element in input_array:
-    sum += element
+def sum_kernel(
+    input: list[float], 
+    output: float,
+    input_size: int
+    ):
+    sum = 0
+    for pos in range(input_size):
+        sum += input[pos]
 
-print(sum)
+    output = sum
+
+
+
+
+
+
+    return output
+
+
 
 
 

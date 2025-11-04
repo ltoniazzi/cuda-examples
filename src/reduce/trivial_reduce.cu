@@ -15,48 +15,52 @@ __global__ void TrivialSumReductionKernel(
 
 int main() {
     // Size of the input data
-    const int size = 2048 * 2000;
+    const int size = 2048;
     const int bytes = size * sizeof(float);
 
     // Allocate memory for input and output on host
-    float* h_input = new float[size];
-    float* h_output = new float;
+    float* host_input = new float[size];
+    float* host_output = new float;
 
     // Initialize input data on host
     for (int i = 0; i < size; i++) {
-        h_input[i] = 1.0f; // Example: Initialize all elements to 1
+        host_input[i] = 1.0f; // Example: Initialize all elements to 1
     }
 
     // Allocate memory for input and output on device
-    float* d_input;
-    float* d_output;
-    cudaMalloc(&d_input, bytes);
-    cudaMalloc(&d_output, sizeof(float));
+    float* device_input;
+    float* device_output;
+    cudaMalloc(&device_input, bytes);
+    cudaMalloc(&device_output, sizeof(float));
 
-    // Copy data from host to device
-    cudaMemcpy(d_input, h_input, bytes, cudaMemcpyHostToDevice);
+    // Copy data from host to device.  ~ .to(device) in python
+    cudaMemcpy(device_input, host_input, bytes, cudaMemcpyHostToDevice);
 
 
+    // Up to this point
+    // input = torch.Tensor([1.0]*size).to("cuda")
+
+
+    // Set number of blocks and threads (per block)
+    int n_blocks = 1; int n_threads = 1; 
 
     // Launch the kernel
-    int n_threads = 1;
-    int n_blocks = 1;
-    TrivialSumReductionKernel<<<n_blocks, n_threads>>>(d_input, d_output, size);
+    TrivialSumReductionKernel<<<n_blocks, n_threads>>>(device_input, device_output, size);
 
     std::cout << "Array size: " << size << std::endl;
     std::cout << "Blocks: " << n_blocks << ", Threads per block: " << n_threads << std::endl;
     std::cout << "\nExpected result: " << size << std::endl;
     // Copy result back to host
-    cudaMemcpy(h_output, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(host_output, device_output, sizeof(float), cudaMemcpyDeviceToHost);
 
     // Print the result
-    std::cout << "\nSum is " << *h_output << "\n" << std::endl;
+    std::cout << "Actual result:   " << *host_output << "\n" << std::endl;
 
     // Cleanup
-    delete[] h_input;
-    delete h_output;
-    cudaFree(d_input);
-    cudaFree(d_output);
+    delete[] host_input;
+    delete host_output;
+    cudaFree(device_input);
+    cudaFree(device_output);
 
     return 0;
 }
