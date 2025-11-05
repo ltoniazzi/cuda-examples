@@ -11,6 +11,9 @@ run_trivial:
 run_thread:
 	$(MAKE) run FILE_NAME=thread_reduce
 
+run_thread_miss_one:
+	$(MAKE) run FILE_NAME=thread_miss_one_reduce
+
 run_block:
 	$(MAKE) run FILE_NAME=block_reduce
 
